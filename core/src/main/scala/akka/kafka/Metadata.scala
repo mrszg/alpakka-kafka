@@ -45,6 +45,22 @@ object Metadata {
         .getOrElse(Optional.empty())
   }
 
+  case object CheckConnection extends Request with NoSerializationVerificationNeeded
+  final case class Connection(response: Try[java.util.List[PartitionInfo]])
+    extends Response
+      with NoSerializationVerificationNeeded {
+
+    /**
+     * Java API
+     */
+    def getResponse: Optional[java.util.List[PartitionInfo]] =
+      response
+        .map { m =>
+          Optional.of(m)
+        }
+        .getOrElse(Optional.empty())
+  }
+
   /**
    * Java API:
    * [[org.apache.kafka.clients.consumer.KafkaConsumer#listTopics()]]

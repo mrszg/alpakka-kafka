@@ -10,16 +10,7 @@ import java.util.concurrent.locks.LockSupport
 import java.util.regex.Pattern
 import akka.Done
 import akka.actor.Status.Failure
-import akka.actor.{
-  Actor,
-  ActorRef,
-  DeadLetterSuppression,
-  NoSerializationVerificationNeeded,
-  Stash,
-  Status,
-  Terminated,
-  Timers
-}
+import akka.actor.{Actor, ActorRef, DeadLetterSuppression, NoSerializationVerificationNeeded, Stash, Status, Terminated, Timers}
 import akka.annotation.InternalApi
 import akka.util.JavaDurationConverters._
 import akka.event.LoggingReceive
@@ -28,7 +19,7 @@ import akka.kafka._
 import akka.kafka.scaladsl.PartitionAssignmentHandler
 import org.apache.kafka.clients.consumer._
 import org.apache.kafka.common.errors.RebalanceInProgressException
-import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
+import org.apache.kafka.common.{Metric, MetricName, PartitionInfo, TopicPartition}
 
 import scala.annotation.nowarn
 import scala.jdk.CollectionConverters._
@@ -186,6 +177,8 @@ import scala.util.control.NonFatal
   private var settings: ConsumerSettings[K, V] = _
   private var pollTimeout: java.time.Duration = _
 
+  private var time: Long = 0L
+
   /** Limits the blocking on offsetForTimes */
   private var offsetForTimesTimeout: java.time.Duration = _
 
@@ -251,6 +244,7 @@ import scala.util.control.NonFatal
       }
 
     case p: Poll[_, _] =>
+      time = System.currentTimeMillis()
       receivePoll(p)
 
     case req: RequestMessages =>
@@ -661,6 +655,38 @@ import scala.util.control.NonFatal
           }
           .toMap
       })
+
+//        // previous approach
+//        case Metadata.CheckConnection =>
+//          Metadata.Connection(Try {
+//            consumer
+//              .listTopics(settings.getMetadataRequestTimeout)
+//          })
+
+//    // 1st solution
+//    case Metadata.CheckConnection =>
+//      Metadata.Connection(Try {
+//        println("check")
+//        consumer
+//          .partitionsFor("chronica_detectedevents", settings.getMetadataRequestTimeout)
+//      })
+
+        // 2nd solution
+        case Metadata.CheckConnection =>
+              Metadata.Connection(Try {
+                var res: java.util.List[PartitionInfo] = new java.util.ArrayList[PartitionInfo]()
+                val currentTime: Long = System.currentTimeMillis()
+
+                if (currentTime - time > 200) {
+                  res = consumer
+                    .partitionsFor("chronica_detectedevents", settings.getMetadataRequestTimeout)
+                  println("called partitionsFor")
+                } else {
+                  println("time ok")
+                }
+                res
+              })
+
 
     case Metadata.GetPartitionsFor(topic) =>
       Metadata.PartitionsFor(Try {
