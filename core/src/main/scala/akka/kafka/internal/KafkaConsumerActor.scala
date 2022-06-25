@@ -10,7 +10,16 @@ import java.util.concurrent.locks.LockSupport
 import java.util.regex.Pattern
 import akka.Done
 import akka.actor.Status.Failure
-import akka.actor.{Actor, ActorRef, DeadLetterSuppression, NoSerializationVerificationNeeded, Stash, Status, Terminated, Timers}
+import akka.actor.{
+  Actor,
+  ActorRef,
+  DeadLetterSuppression,
+  NoSerializationVerificationNeeded,
+  Stash,
+  Status,
+  Terminated,
+  Timers
+}
 import akka.annotation.InternalApi
 import akka.util.JavaDurationConverters._
 import akka.event.LoggingReceive
@@ -177,7 +186,12 @@ import scala.util.control.NonFatal
   private var settings: ConsumerSettings[K, V] = _
   private var pollTimeout: java.time.Duration = _
 
-  private var time: Long = 0L
+  /** records last successful poll time - to avoid connection checking for recently healthy connection */
+  private var lastSuccessfulOpTime: Long = 0L
+  private val lastSuccessfulOpTimeValidity: Long = 150.millis.toMillis
+
+  /** records time of last operation which results means connection to broker is healthy */
+  def recordSuccessfulOpTime(): Unit = lastSuccessfulOpTime = System.currentTimeMillis()
 
   /** Limits the blocking on offsetForTimes */
   private var offsetForTimesTimeout: java.time.Duration = _
@@ -238,13 +252,13 @@ import scala.util.control.NonFatal
     case Seek(offsets) =>
       try {
         offsets.foreach { case (tp, offset) => consumer.seek(tp, offset) }
+        recordSuccessfulOpTime()
         sender() ! Done
       } catch {
         case NonFatal(e) => sendFailure(e, sender())
       }
 
     case p: Poll[_, _] =>
-      time = System.currentTimeMillis()
       receivePoll(p)
 
     case req: RequestMessages =>
@@ -599,6 +613,7 @@ import scala.util.control.NonFatal
 
   private def processResult(partitionsToFetch: Set[TopicPartition], rawResult: ConsumerRecords[K, V]): Unit =
     if (!rawResult.isEmpty) {
+      recordSuccessfulOpTime() // results non empty - so broker was connected for sure
       //check the we got only requested partitions and did not drop any messages
       val fetchedTps = rawResult.partitions().asScala
       if ((fetchedTps diff partitionsToFetch).nonEmpty)
@@ -656,37 +671,20 @@ import scala.util.control.NonFatal
           .toMap
       })
 
-//        // previous approach
-//        case Metadata.CheckConnection =>
-//          Metadata.Connection(Try {
-//            consumer
-//              .listTopics(settings.getMetadataRequestTimeout)
-//          })
+    // 2nd solution
+    case Metadata.CheckConnection(topic, interval: FiniteDuration) =>
+      val result = Try {
+        val currentTime: Long = System.currentTimeMillis()
+        if (currentTime - lastSuccessfulOpTime > interval.toMillis) {
+          // call this to check connection health
+          consumer.partitionsFor(topic, settings.getMetadataRequestTimeout)
+        }
+      } match {
+        case scala.util.Success(_) => None
+        case scala.util.Failure(exception) => Some(exception)
+      }
 
-//    // 1st solution
-//    case Metadata.CheckConnection =>
-//      Metadata.Connection(Try {
-//        println("check")
-//        consumer
-//          .partitionsFor("chronica_detectedevents", settings.getMetadataRequestTimeout)
-//      })
-
-        // 2nd solution
-        case Metadata.CheckConnection =>
-              Metadata.Connection(Try {
-                var res: java.util.List[PartitionInfo] = new java.util.ArrayList[PartitionInfo]()
-                val currentTime: Long = System.currentTimeMillis()
-
-                if (currentTime - time > 200) {
-                  res = consumer
-                    .partitionsFor("chronica_detectedevents", settings.getMetadataRequestTimeout)
-                  println("called partitionsFor")
-                } else {
-                  println("time ok")
-                }
-                res
-              })
-
+      Metadata.Connection(result)
 
     case Metadata.GetPartitionsFor(topic) =>
       Metadata.PartitionsFor(Try {
@@ -720,7 +718,9 @@ import scala.util.control.NonFatal
         val search = timestampsToSearch.map {
           case (k, v) => k -> (v: java.lang.Long)
         }.asJava
-        consumer.offsetsForTimes(search, settings.getMetadataRequestTimeout).asScala.toMap
+        val res = consumer.offsetsForTimes(search, settings.getMetadataRequestTimeout).asScala.toMap
+        recordSuccessfulOpTime()
+        res
       })
 
     case Metadata.GetCommittedOffsets(partitions) =>

@@ -5,12 +5,12 @@
 
 package akka.kafka
 
-import java.util.Optional
-
 import akka.actor.NoSerializationVerificationNeeded
 import org.apache.kafka.clients.consumer.{OffsetAndMetadata, OffsetAndTimestamp}
 import org.apache.kafka.common.{PartitionInfo, TopicPartition}
 
+import java.util.Optional
+import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
@@ -45,16 +45,16 @@ object Metadata {
         .getOrElse(Optional.empty())
   }
 
-  case object CheckConnection extends Request with NoSerializationVerificationNeeded
-  final case class Connection(response: Try[java.util.List[PartitionInfo]])
-    extends Response
-      with NoSerializationVerificationNeeded {
+  case class CheckConnection(topic: String, interval: FiniteDuration)
+      extends Request
+      with NoSerializationVerificationNeeded
+  final case class Connection(error: Option[Throwable]) extends Response with NoSerializationVerificationNeeded {
 
     /**
      * Java API
      */
-    def getResponse: Optional[java.util.List[PartitionInfo]] =
-      response
+    def getResponse: Optional[Throwable] =
+      error
         .map { m =>
           Optional.of(m)
         }

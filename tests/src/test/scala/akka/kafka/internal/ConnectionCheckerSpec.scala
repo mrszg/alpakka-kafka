@@ -12,6 +12,7 @@ import akka.kafka.KafkaConnectionFailed
 import akka.kafka.tests.scaladsl.LogCapturing
 import akka.testkit.TestKit
 import com.typesafe.config.ConfigFactory
+import org.apache.kafka.common.PartitionInfo
 import org.apache.kafka.common.errors.TimeoutException
 import org.scalatest.wordspec.AnyWordSpecLike
 import org.scalatest.matchers.should.Matchers
@@ -32,19 +33,19 @@ class ConnectionCheckerSpec
       ConnectionCheckerSettings(3, retryInterval, 2d)
 
     "wait for response and retryInterval before perform new ask" in withCheckerActorRef { checker =>
-      expectListTopicsRequest(retryInterval)
+      expectCheckConnectionRequest(retryInterval)
 
       Thread.sleep(retryInterval.toMillis)
-      checker ! Metadata.Topics(Success(Map.empty))
+      checker ! Metadata.Connection(None)
 
-      expectListTopicsRequest(retryInterval)
+      expectCheckConnectionRequest(retryInterval)
     }
 
     "exponentially retry on failure and failed after max retries exceeded" in withCheckerActorRef { checker =>
       var interval = retryInterval
       for (_ <- 1 to (config.maxRetries + 1)) {
-        expectListTopicsRequest(interval)
-        checker ! Metadata.Topics(Failure(new TimeoutException()))
+        expectCheckConnectionRequest(interval)
+        checker ! Metadata.Connection(Some(new TimeoutException()))
         interval = newExponentialInterval(interval, config.factor)
       }
 
@@ -54,22 +55,22 @@ class ConnectionCheckerSpec
     }
 
     "return to normal mode if in backoff mode receive Metadata.Topics(success)" in withCheckerActorRef { checker =>
-      expectListTopicsRequest(retryInterval)
-      checker ! Metadata.Topics(Failure(new TimeoutException()))
+      expectCheckConnectionRequest(retryInterval)
+      checker ! Metadata.Connection(Some(new TimeoutException()))
 
-      expectListTopicsRequest(newExponentialInterval(retryInterval, config.factor))
-      checker ! Metadata.Topics(Success(Map.empty))
+      expectCheckConnectionRequest(newExponentialInterval(retryInterval, config.factor))
+      checker ! Metadata.Connection(None)
 
-      expectListTopicsRequest(retryInterval)
+      expectCheckConnectionRequest(retryInterval)
     }
   }
 
   def newExponentialInterval(previousInterval: FiniteDuration, factor: Double): FiniteDuration =
     (previousInterval * factor).asInstanceOf[FiniteDuration]
 
-  def expectListTopicsRequest(interval: FiniteDuration): Unit = {
+  def expectCheckConnectionRequest(interval: FiniteDuration): Unit = {
     expectNoMessage(interval - 20.millis)
-    expectMsg(Metadata.ListTopics)
+    expectMsg(Metadata.CheckConnection("__consumer_offsets", interval))
   }
 
   def withCheckerActorRef[T](block: ActorRef => T)(implicit config: ConnectionCheckerSettings): T =

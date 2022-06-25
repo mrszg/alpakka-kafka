@@ -15,7 +15,8 @@ import java.time.{Duration => JDuration}
 class ConnectionCheckerSettings private[kafka] (val enable: Boolean,
                                                 val maxRetries: Int,
                                                 val checkInterval: FiniteDuration,
-                                                val factor: Double) {
+                                                val factor: Double,
+                                                val checkTopic: String) {
 
   require(factor > 0, "Backoff factor for connection checker must be finite positive number")
   require(maxRetries >= 0, "retries for connection checker must be not negative number")
@@ -23,12 +24,14 @@ class ConnectionCheckerSettings private[kafka] (val enable: Boolean,
   private def copy(enable: Boolean = enable,
                    maxRetries: Int = maxRetries,
                    checkInterval: FiniteDuration = checkInterval,
-                   factor: Double = factor): ConnectionCheckerSettings =
+                   factor: Double = factor,
+                   checkTopic: String = checkTopic): ConnectionCheckerSettings =
     new ConnectionCheckerSettings(
-      enable,
-      maxRetries,
-      checkInterval,
-      factor
+      enable = enable,
+      maxRetries = maxRetries,
+      checkInterval = checkInterval,
+      factor = factor,
+      checkTopic = checkTopic
     )
 
   def withEnable(enable: Boolean): ConnectionCheckerSettings = copy(enable = enable)
@@ -42,12 +45,15 @@ class ConnectionCheckerSettings private[kafka] (val enable: Boolean,
   def withCheckInterval(checkInterval: JDuration): ConnectionCheckerSettings =
     copy(checkInterval = checkInterval.asScala)
 
+  def withCheckTopic(topic: String): ConnectionCheckerSettings = copy(checkTopic = topic)
+
   override def toString: String =
     s"akka.kafka.ConnectionCheckerSettings(" +
     s"enable=$enable," +
     s"maxRetries=$maxRetries," +
     s"checkInterval=${checkInterval.toCoarsest}," +
     s"factor=$factor" +
+    s"checkTopic=$checkTopic" +
     ")"
 }
 
@@ -56,11 +62,19 @@ object ConnectionCheckerSettings {
   val configPath: String = "connection-checker"
   val fullConfigPath: String = ConsumerSettings.configPath + "." + configPath
 
-  def apply(maxRetries: Int, checkInterval: FiniteDuration, factor: Double): ConnectionCheckerSettings =
-    new ConnectionCheckerSettings(true, maxRetries, checkInterval, factor)
+  val defaultCheckTopic = "__consumer_offsets"
 
-  def create(maxRetries: Int, checkInterval: FiniteDuration, factor: Double): ConnectionCheckerSettings =
-    apply(maxRetries, checkInterval, factor)
+  def apply(maxRetries: Int,
+            checkInterval: FiniteDuration,
+            factor: Double,
+            checkTopic: String = defaultCheckTopic): ConnectionCheckerSettings =
+    new ConnectionCheckerSettings(true, maxRetries, checkInterval, factor, checkTopic)
+
+  def create(maxRetries: Int,
+             checkInterval: FiniteDuration,
+             factor: Double,
+             checkTopic: String): ConnectionCheckerSettings =
+    apply(maxRetries, checkInterval, factor, checkTopic)
 
   /**
    * Create settings from a configuration with layout `connection-checker`.
@@ -71,7 +85,8 @@ object ConnectionCheckerSettings {
       val retries = config.getInt("max-retries")
       val factor = config.getDouble("backoff-factor")
       val checkInterval = config.getDuration("check-interval").asScala
-      apply(retries, checkInterval, factor)
+      val checkTopic = config.getString("check-topic")
+      apply(retries, checkInterval, factor, checkTopic)
     } else Disabled
   }
 
@@ -80,6 +95,7 @@ object ConnectionCheckerSettings {
    */
   def create(config: Config): ConnectionCheckerSettings = apply(config)
 
-  val Disabled: ConnectionCheckerSettings = new ConnectionCheckerSettings(false, 3, 15.seconds, 2d)
+  val Disabled: ConnectionCheckerSettings =
+    new ConnectionCheckerSettings(false, 3, 15.seconds, 2d, checkTopic = defaultCheckTopic)
 
 }

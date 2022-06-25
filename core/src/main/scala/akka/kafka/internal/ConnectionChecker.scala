@@ -39,16 +39,16 @@ import scala.util.{Failure, Success}
 
   def behaviour(failedAttempts: Int, interval: FiniteDuration): Receive = {
     case CheckConnection =>
-      context.parent ! Metadata.CheckConnection
+      context.parent ! Metadata.CheckConnection(config.checkTopic, interval)
 
-    case Metadata.Connection(Failure(te: TimeoutException)) =>
+    case Metadata.Connection(Some(te: TimeoutException)) =>
       //failedAttempts is a sum of first triggered failure and retries (retries + 1)
       if (failedAttempts == maxRetries) {
         context.parent ! KafkaConnectionFailed(te, maxRetries)
         context.stop(self)
       } else context.become(backoff(failedAttempts + 1, startBackoffTimer(interval)))
 
-    case Metadata.Connection(Success(_)) =>
+    case Metadata.Connection(None) =>
       startTimer()
       context.become(regular)
   }
